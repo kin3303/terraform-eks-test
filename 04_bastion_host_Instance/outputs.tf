@@ -48,4 +48,21 @@ output "bastion_sequrity_group_id" {
   value = module.bastion_public_sg.security_group_id
 }
 
-# Instance
+# Bastion Instance ID
+output "bastion_host_id" {
+  value = module.bastion_ec2_instance.id
+}
+
+
+# Bastion Instance IP Check
+output "bastion_host_public_ip" {
+  value = module.bastion_ec2_instance.public_ip
+}
+
+output "bastion_host_eip" {
+  value = aws_eip.bastion_eip.public_ip
+}
+
+
+
+

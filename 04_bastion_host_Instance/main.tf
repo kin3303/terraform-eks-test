@@ -127,17 +127,51 @@ module "bastion_ec2_instance" {
   instance_type = var.bastion_instance_type
   key_name      = var.bastion_instance_keypair
   #monitoring   = true
-  vpc_security_group_ids = [ module.bastion_public_sg.security_group_id ]
+  vpc_security_group_ids = [module.bastion_public_sg.security_group_id]
   subnet_id              = module.vpc.public_subnets[0]
 
   tags = local.common_tags
 }
 
 resource "aws_eip" "bastion_eip" {
-  instance = module.bastion_ec2_instance.id
-  vpc      = true
-  depends_on = [ module.bastion_ec2_instance, module.vpc ]
+  depends_on = [module.bastion_ec2_instance, module.vpc]
+
+  vpc                       = true
+  instance                  = module.bastion_ec2_instance.id
+  associate_with_private_ip = module.bastion_ec2_instance.private_ip
+
   tags = local.common_tags
+}
+
+resource "aws_eip_association" "bastion_eip_asso" {
+  instance_id   = module.bastion_ec2_instance.id
+  allocation_id = aws_eip.bastion_eip.id
+
+}
+
+resource "null_resource" "bastion_ec2_key_copy" {
+  depends_on = [module.bastion_ec2_instance, aws_eip.bastion_eip]
+
+  # Connection Block
+  connection {
+    type        = "ssh"
+    host        = aws_eip.bastion_eip.public_ip
+    user        = "ec2-user"
+    password    = ""
+    private_key = file(var.private_key_file_path)
+  }
+
+  ## File Provisioner: 로컬 키 파일을 리소스에 전달 및 권한 부여
+  provisioner "file" {
+    source      = var.private_key_file_path
+    destination = "/tmp/eks-terraform-key.pem"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo chmod 400 /tmp/eks-terraform-key.pem"
+    ]
+  }
 }
 
 ###########################################################################

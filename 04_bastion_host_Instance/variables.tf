@@ -100,3 +100,9 @@ variable "bastion_instance_keypair" {
   type = string
   default = "eks-terraform-key"
 }
+
+variable "private_key_file_path" {
+  description = "Private key file to handle eks worker node from bastion host"
+  type = string
+  default = "D:/Key/eks-terraform-key.pem"
+}
