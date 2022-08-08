@@ -188,7 +188,6 @@ resource "null_resource" "bastion_ec2_key_copy" {
 #   https://docs.aws.amazon.com/eks/latest/userguide/create-node-role.html
 ###########################################################################
 
-# Cluster
 resource "aws_iam_role" "eks_master_role" {
   name = "${local.name}-eks-master-role"
 
@@ -275,6 +274,98 @@ resource "aws_eks_cluster" "eks_cluster" {
   ]
 }
 
+###########################################################################
+# EKS Cluster Node Group - Public
+#    https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_node_group
+###########################################################################
+
+resource "aws_eks_node_group" "eks_ng_public" {
+  cluster_name    = aws_eks_cluster.eks_cluster.name
+  node_group_name = "${local.name}-eks-ng-public"
+  node_role_arn   = aws_iam_role.eks_nodegroup_role.arn
+  subnet_ids      = module.vpc.public_subnets
+
+  #ami_type       = "AL2_x86_64"
+  #capacity_type  = "ON_DEMAND"
+  #disk_size      = 20
+  instance_types = ["t2.medium"]
+  remote_access {
+    ec2_ssh_key = var.bastion_instance_keypair
+    #source_security_group_ids = module.bastion_public_sg.security_group_id
+  }
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 2
+  }
+
+  update_config {
+    #max_unavailable = 1
+    max_unavailable_percentage = 50
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks-AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.eks-AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.eks-AmazonEC2ContainerRegistryReadOnly,
+  ]
+
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
+
+  tags = {
+    Name = "Public-Node-Group"
+  }
+}
+
+
+###########################################################################
+# EKS Cluster Node Group - Private
+#    https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_node_group
+###########################################################################
+
+resource "aws_eks_node_group" "eks_ng_private" {
+  cluster_name    = aws_eks_cluster.eks_cluster.name
+  node_group_name = "${local.name}-eks-ng-private"
+  node_role_arn   = aws_iam_role.eks_nodegroup_role.arn
+  subnet_ids      = module.vpc.private_subnets
+
+  #ami_type       = "AL2_x86_64"
+  #capacity_type  = "ON_DEMAND"
+  #disk_size      = 20
+  instance_types = ["t2.medium"]
+  remote_access {
+    ec2_ssh_key = var.bastion_instance_keypair
+    #source_security_group_ids = module.bastion_public_sg.security_group_id
+  }
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 2
+  }
+
+  update_config {
+    #max_unavailable = 1
+    max_unavailable_percentage = 50
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks-AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.eks-AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.eks-AmazonEC2ContainerRegistryReadOnly,
+  ]
+
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
+
+  tags = {
+    Name = "Private-Node-Group"
+  }
+}
 
 ###########################################################################
 # tflint
