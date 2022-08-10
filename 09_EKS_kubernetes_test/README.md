@@ -21,10 +21,9 @@ kubectl describe ds aws-node -n kube-system
 kubectl describe ds kube-proxy -n kube-system
 kubectl describe deploy coredns -n kube-system
 
-# 배포 테스트
+# deployment + service(nlb) 배포 테스트
 kubectl apply -f loadbalancer.yaml
-kubectl get svc nlb-sample-service -n lbtest 
-# External IP 로 접속해봄
+kubectl get svc nlb-sample-service -n lbtest  
 kubectl delete -f loadbalancer.yaml
 
 ```
