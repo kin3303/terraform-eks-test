@@ -5,6 +5,10 @@
 ## kubeconfig
 - https://docs.aws.amazon.com/eks/latest/userguide/getting-started-console.html#eks-configure-kubectl
 
+
+## Test
+- https://kubernetes.io/docs/reference/kubectl/cheatsheet/
+
 ```console
 aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster
 kubectl get nodes
