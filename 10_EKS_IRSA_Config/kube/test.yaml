@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    eks.amazonaws.com/role-arn: "<OUTPUT - irsa_iam_role_arn>"
+  name: irsa-demo-sa
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: irsa-demo 
+  labels:
+    app: irsa-demo  
+spec:
+  template:
+    metadata:
+      labels:
+        app: irsa-demo
+    spec:
+      containers:
+      - name: irsa-demo
+        image: amazon/aws-cli:latest
+        command: ["aws", "s3", "ls"]
+      serviceAccountName: irsa-demo-sa
+      restartPolicy: Never
+
+
+# PUT irsa_iam_role_arn from terraform output
+# kubectl apply -f test.yaml
+# kubectl get sa
+# kubectl get job
+# kubectl describe job irsa-demo
+# kubectl logs -f -l app=irsa-demo  --max-log-requests=100
+# kubectl delete -f test.yaml
