@@ -380,6 +380,9 @@ resource "aws_eks_node_group" "eks_ng_private" {
 #    https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_cluster
 #    https://github.com/terraform-aws-modules/terraform-aws-eks/tree/v11.0.0/examples/irsa
 ########################################################################### 
+
+# terraform-aws-modules : iam-assumable-role-with-oidc
+
 data "aws_partition" "current" {}
 
 data "tls_certificate" "example" {
@@ -398,7 +401,6 @@ resource "aws_iam_openid_connect_provider" "oidc_provider" {
     local.common_tags
   )
 }
-
 
 resource "aws_iam_role" "irsa_iam_role" {
   name = "${local.name}-irsa-iam-role"
@@ -434,6 +436,59 @@ resource "aws_iam_role_policy_attachment" "irsa_iam_role_policy_attach" {
 
 
 ###########################################################################
+# EBS IRSA
+###########################################################################
+resource "aws_iam_role" "ebs_csi_iam_role" {
+  name = "${local.name}-ebs-csi-iam-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Effect = "Allow"
+        Sid    = ""
+        Principal = {
+          Federated = "${aws_iam_openid_connect_provider.oidc_provider.arn}"
+        }
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.oidc_provider.url, "https://", "")}:sub" : "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+          }
+        }
+      },
+    ]
+  })
+
+  tags = {
+    tag-key = "${local.name}-ebs-csi-iam-role"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_iam_role_policy_attach" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi_iam_role.name
+}
+
+
+# https://aws.amazon.com/blogs/containers/amazon-ebs-csi-driver-is-now-generally-available-in-amazon-eks-add-ons/
+resource "aws_eks_addon" "ebs-csi" {
+  cluster_name             = aws_eks_cluster.eks_cluster.id
+  addon_name               = "aws-ebs-csi-driver"
+  addon_version            = "v1.5.2-eksbuild.1"
+  service_account_role_arn = aws_iam_role.ebs_csi_iam_role.arn
+  tags = {
+    "eks_addon" = "ebs-csi"
+    "terraform" = "true"
+  }
+}
+
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster
+# kubectl get deploy,ds,sa -l="app.kubernetes.io/name=aws-ebs-csi-driver" -n kube-system
+# kubectl get sc
+
+
+###########################################################################
 # tflint
 ###########################################################################
 
@@ -443,3 +498,5 @@ resource "aws_instance" "foo" {
   instance_type = "t1.2xlarge" # invalid type!
 }
 */
+
+
