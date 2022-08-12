@@ -4,6 +4,7 @@ metadata:
   name: gp3
 allowVolumeExpansion: true
 provisioner: ebs.csi.aws.com
+reclaimPolicy: Retain
 volumeBindingMode: WaitForFirstConsumer
 parameters:
   type: gp3
