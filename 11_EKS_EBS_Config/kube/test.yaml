@@ -1,0 +1,49 @@
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: gp3
+allowVolumeExpansion: true
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-csi
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-gp3
+spec:
+  containers:
+    - name: app
+      image: centos
+      command: ["/bin/sh"]
+      args:
+        ["-c", "while true; do echo $(date -u) >> /data/out.txt; sleep 5; done"]
+      volumeMounts:
+        - name: persistent-storage
+          mountPath: /data
+  volumes:
+    - name: persistent-storage
+      persistentVolumeClaim:
+        claimName: pvc-csi
+
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster
+# kubectl apply -f test.yaml
+# kubectl get pod
+# kubectl get pvc
+# kubectl get pv <PVC_VOLUME_ID>
+# kubectl delete -f test.yaml
