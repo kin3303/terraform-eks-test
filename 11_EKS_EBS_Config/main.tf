@@ -481,11 +481,14 @@ resource "aws_eks_addon" "ebs-csi" {
     "eks_addon" = "ebs-csi"
     "terraform" = "true"
   }
+  depends_on = [aws_iam_role_policy_attachment.ebs_csi_iam_role_policy_attach]
 }
 
+# aws eks list-addons --cluster-name hr-dev-eksdemo1
 # aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster
 # kubectl get deploy,ds,sa -l="app.kubernetes.io/name=aws-ebs-csi-driver" -n kube-system
 # kubectl get sc
+# aws eks list-addons --cluster-name hr-dev-eksdemo1
 
 
 ###########################################################################
