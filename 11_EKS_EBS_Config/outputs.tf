@@ -180,9 +180,9 @@ output "ebs_csi_iam_role_arn" {
 
 output "ebs_csi_addon_arn" {
   description = "EKS AddOn - EBS CSI Driver ARN"
-  value       = aws_eks_addon.ebs_eks_addon.arn
+  value       = aws_eks_addon.ebs-csi-addon.arn
 }
 output "ebs_csi_addon_id" {
   description = "EKS AddOn - EBS CSI Driver ID"
-  value       = aws_eks_addon.ebs_eks_addon.id
+  value       = aws_eks_addon.ebs-csi-addon.id
 }

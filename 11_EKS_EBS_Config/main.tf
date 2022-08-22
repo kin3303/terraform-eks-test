@@ -472,7 +472,7 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_iam_role_policy_attach" {
 
 
 # https://aws.amazon.com/blogs/containers/amazon-ebs-csi-driver-is-now-generally-available-in-amazon-eks-add-ons/
-resource "aws_eks_addon" "ebs-csi" {
+resource "aws_eks_addon" "ebs-csi-addon" {
   cluster_name             = aws_eks_cluster.eks_cluster.id
   addon_name               = "aws-ebs-csi-driver"
   addon_version            = "v1.5.2-eksbuild.1"
