@@ -317,6 +317,7 @@ resource "aws_eks_node_group" "eks_ng_public" {
     aws_iam_role_policy_attachment.eks-AmazonEKSWorkerNodePolicy,
     aws_iam_role_policy_attachment.eks-AmazonEKS_CNI_Policy,
     aws_iam_role_policy_attachment.eks-AmazonEC2ContainerRegistryReadOnly,
+    kubernetes_config_map_v1.aws_auth
   ]
 
   lifecycle {
@@ -363,6 +364,7 @@ resource "aws_eks_node_group" "eks_ng_private" {
     aws_iam_role_policy_attachment.eks-AmazonEKSWorkerNodePolicy,
     aws_iam_role_policy_attachment.eks-AmazonEKS_CNI_Policy,
     aws_iam_role_policy_attachment.eks-AmazonEC2ContainerRegistryReadOnly,
+    kubernetes_config_map_v1.aws_auth
   ]
 
   lifecycle {
@@ -413,7 +415,7 @@ resource "aws_iam_role" "irsa_iam_role" {
         Effect = "Allow"
         Sid    = ""
         Principal = {
-          Federated = "${aws_iam_openid_connect_provider.oidc_provider.arn}"
+          Federated = aws_iam_openid_connect_provider.oidc_provider.arn
         }
         Condition = {
           StringEquals = {
@@ -449,7 +451,7 @@ resource "aws_iam_role" "ebs_csi_iam_role" {
         Effect = "Allow"
         Sid    = ""
         Principal = {
-          Federated = "${aws_iam_openid_connect_provider.oidc_provider.arn}"
+          Federated = aws_iam_openid_connect_provider.oidc_provider.arn
         }
         Condition = {
           StringEquals = {
@@ -489,6 +491,125 @@ resource "aws_eks_addon" "ebs-csi-addon" {
 # kubectl get sc
 # aws eks list-addons --cluster-name IDT-dev-eks-demo-cluster
 
+
+
+###########################################################################
+# EKS IAM USER
+###########################################################################
+resource "aws_iam_user" "admin_user" {
+  name = "${local.name}-eksadmin1"
+  path = "/"
+  force_destroy = true
+  tags = local.common_tags 
+}
+
+resource "aws_iam_user" "basic_user" {
+  name = "${local.name}-eksadmin2"  
+  path = "/"
+  force_destroy = true
+  tags = local.common_tags
+}
+
+
+resource "aws_iam_user_policy_attachment" "admin_user" {
+  user       = aws_iam_user.admin_user.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+resource "aws_iam_user_policy" "basic_user_eks_policy" {
+  name = "${local.name}-eks-full-access-policy"
+  user = aws_iam_user.basic_user.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "iam:ListRoles",
+          "eks:*",
+          "ssm:GetParameter"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+# Get Current Account 
+data "aws_caller_identity" "current" {}
+
+output "current_account_id" {
+  value = data.aws_caller_identity.current.account_id
+}
+
+output "current_caller_arn" {
+  value = data.aws_caller_identity.current.arn
+}
+
+output "current_caller_user" {
+  value = data.aws_caller_identity.current.user_id
+}
+
+/*
+apiVersion: v1
+kind: ConfigMap
+data:
+  mapRoles: |
+    - rolearn: arn:aws:iam::960249453675:role/IDT-dev-eks-nodegroup-role
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes
+  mapUsers: |
+    - userarn: arn:aws:iam::960249453675:user/eksadmin1
+      username: admin
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::960249453675:user/eksadmin2
+      username: admin2
+      groups:
+        - system:masters
+
+
+metadata:
+  creationTimestamp: "2022-08-23T05:51:22Z"
+  name: aws-auth
+  namespace: kube-system
+  resourceVersion: "16367"
+  uid: 2ff24fa5-e516-4c0f-a6a4-dbb90c537e43        
+
+*/
+
+resource "kubernetes_config_map_v1" "aws_auth" {
+  metadata {
+    name = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapRoles = yamlencode(local.configmap_roles)
+    mapUsers = yamlencode(local.configmap_users)
+  }
+
+  depends_on = [
+    aws_eks_cluster.eks_cluster
+  ]
+}
+
+
+
+# aws iam create-login-profile --user-name IDT-dev-eksadmin1 --password "@EKSUser101" --no-password-reset-required
+# aws iam create-access-key --user-name IDT-dev-eksadmin1
+# aws configure --profile IDT-dev-eksadmin1 
+#      AWS Access Key ID [None]: <ACCESS KEY>
+#      AWS Secret Access Key [None]: <SECRET KEY>
+#      Default region name [None]: ap-northeast-2
+#      Default output format [None]: json
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster --profile IDT-dev-eksadmin1
+# cat $HOME/.kube/config
+# kubectl get nodes
+# IDT-dev-eksadmin2 도 위 과정 동일하게 테스트
 
 ###########################################################################
 # tflint

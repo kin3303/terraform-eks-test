@@ -1,0 +1,9 @@
+{
+    "Version": "2012-10-17",
+    "Statement": {
+        "Sid" : "AllowAssumeOrganizationAccountRole",
+        "Effect": "Allow",
+        "Resource": "arn:aws:iam::960249453675:role/eks-admin-role",
+        "Action": "sts:AssumeRole"
+    }
+}
