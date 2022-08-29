@@ -317,6 +317,7 @@ resource "aws_eks_node_group" "eks_ng_public" {
     aws_iam_role_policy_attachment.eks-AmazonEKSWorkerNodePolicy,
     aws_iam_role_policy_attachment.eks-AmazonEKS_CNI_Policy,
     aws_iam_role_policy_attachment.eks-AmazonEC2ContainerRegistryReadOnly,
+    kubernetes_config_map_v1.aws_auth
   ]
 
   lifecycle {
@@ -363,6 +364,7 @@ resource "aws_eks_node_group" "eks_ng_private" {
     aws_iam_role_policy_attachment.eks-AmazonEKSWorkerNodePolicy,
     aws_iam_role_policy_attachment.eks-AmazonEKS_CNI_Policy,
     aws_iam_role_policy_attachment.eks-AmazonEC2ContainerRegistryReadOnly,
+    kubernetes_config_map_v1.aws_auth
   ]
 
   lifecycle {
@@ -413,7 +415,7 @@ resource "aws_iam_role" "irsa_iam_role" {
         Effect = "Allow"
         Sid    = ""
         Principal = {
-          Federated = "${aws_iam_openid_connect_provider.oidc_provider.arn}"
+          Federated = aws_iam_openid_connect_provider.oidc_provider.arn
         }
         Condition = {
           StringEquals = {
@@ -449,7 +451,7 @@ resource "aws_iam_role" "ebs_csi_iam_role" {
         Effect = "Allow"
         Sid    = ""
         Principal = {
-          Federated = "${aws_iam_openid_connect_provider.oidc_provider.arn}"
+          Federated = aws_iam_openid_connect_provider.oidc_provider.arn
         }
         Condition = {
           StringEquals = {
@@ -481,6 +483,10 @@ resource "aws_eks_addon" "ebs-csi-addon" {
     "eks_addon" = "ebs-csi"
     "terraform" = "true"
   }
+
+  depends_on = [
+    aws_eks_cluster.eks_cluster
+  ]
 }
 
 # aws eks list-addons --cluster-name IDT-dev-eks-demo-cluster
@@ -489,6 +495,231 @@ resource "aws_eks_addon" "ebs-csi-addon" {
 # kubectl get sc
 # aws eks list-addons --cluster-name IDT-dev-eks-demo-cluster
 
+
+
+###########################################################################
+# EKS IAM USER
+###########################################################################
+resource "aws_iam_user" "admin_user" {
+  name          = "${local.name}-eksadmin1"
+  path          = "/"
+  force_destroy = true # Terraform 관리되지 않는 IAM 액세스 키, 로그인 프로파일 또는 MFA 장치가 있더라도 삭제
+  tags          = local.common_tags
+}
+
+resource "aws_iam_user" "basic_user" {
+  name          = "${local.name}-eksadmin2"
+  path          = "/"
+  force_destroy = true
+  tags          = local.common_tags
+}
+
+
+resource "aws_iam_user_policy_attachment" "admin_user" {
+  user       = aws_iam_user.admin_user.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+resource "aws_iam_user_policy" "basic_user_eks_policy" {
+  name = "${local.name}-eks-full-access-policy"
+  user = aws_iam_user.basic_user.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "iam:ListRoles",
+          "eks:*",
+          "ssm:GetParameter"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+
+/*
+apiVersion: v1
+kind: ConfigMap
+data:
+  mapRoles: |
+    - rolearn: arn:aws:iam::960249453675:role/IDT-dev-eks-nodegroup-role
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes
+  mapUsers: |
+    - userarn: arn:aws:iam::960249453675:user/eksadmin1
+      username: admin
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::960249453675:user/eksadmin2
+      username: admin2
+      groups:
+        - system:masters
+
+
+metadata:
+  creationTimestamp: "2022-08-23T05:51:22Z"
+  name: aws-auth
+  namespace: kube-system
+  resourceVersion: "16367"
+  uid: 2ff24fa5-e516-4c0f-a6a4-dbb90c537e43        
+
+*/
+
+resource "kubernetes_config_map_v1" "aws_auth" {
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapRoles = yamlencode(local.configmap_roles)
+    mapUsers = yamlencode(local.configmap_users)
+  }
+
+  depends_on = [
+    aws_eks_cluster.eks_cluster,
+    aws_iam_role.eks_admin_role
+  ]
+}
+
+# aws iam create-login-profile --user-name IDT-dev-eksadmin1 --password "@EKSUser101" --no-password-reset-required
+# aws iam create-access-key --user-name IDT-dev-eksadmin1
+# aws configure --profile IDT-dev-eksadmin1 
+#      AWS Access Key ID [None]: <ACCESS KEY>
+#      AWS Secret Access Key [None]: <SECRET KEY>
+#      Default region name [None]: ap-northeast-2
+#      Default output format [None]: json
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster --profile IDT-dev-eksadmin1
+# cat $HOME/.kube/config
+# kubectl get nodes
+# IDT-dev-eksadmin2 도 위 과정 동일하게 테스트
+# <user>/.aws/config 와  <user>/.aws/credentials 에서 테스트 정보 삭제
+
+
+###########################################################################
+# EKS IAM Role
+###########################################################################
+
+# IAM Role
+data "aws_caller_identity" "current" {}
+
+resource "aws_iam_role" "eks_admin_role" {
+  name = "${local.name}-admin-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Sid    = ""
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+      },
+    ]
+  })
+
+  inline_policy {
+    name = "eks-full-access-policy"
+    policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Action   = ["iam:ListRoles", "eks:*", "ssm:GetParameter"]
+          Effect   = "Allow"
+          Sid      = ""
+          Resource = "*"
+        },
+      ]
+    })
+  }
+
+  tags = {
+    tag-key = "${local.name}-admin-role"
+  }
+}
+
+
+# User & Group
+resource "aws_iam_user" "eksadmin_guser" {
+  name          = "${local.name}-eksadmin-guser"
+  path          = "/"
+  force_destroy = true
+  tags          = local.common_tags
+}
+
+
+resource "aws_iam_group" "eksadmin_iam_group" {
+  name = "${local.name}-eksadmins"
+  path = "/"
+
+  depends_on = [
+    aws_iam_role.eks_admin_role,
+  ]    
+}
+
+resource "aws_iam_group_policy" "eksadmin_iam_group" {
+  name  = "${local.name}-eksadmins-group-policy"
+  group = aws_iam_group.eksadmin_iam_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "ec2:AssumeRole*",
+        ]
+        Sid      = "AllowAssumeOrganizationAccountRole"
+        Effect   = "Allow"
+        Resource = aws_iam_role.eks_admin_role.arn
+      },
+    ]
+  })
+}
+
+
+# Group Membership
+resource "aws_iam_group_membership" "eksadmins_membership" {
+  name = "${local.name}-group-membership"
+
+  users = [
+    aws_iam_user.eksadmin_guser.name,
+  ]
+
+  group = aws_iam_group.eksadmin_iam_group.name
+}
+
+
+# aws iam create-login-profile --user-name IDT-dev-eksadmin-guser --password "@EKSUser101" --no-password-reset-required
+# aws iam create-access-key --user-name IDT-dev-eksadmin-guser
+# aws configure --profile IDT-dev-eksadmin-guser 
+#      AWS Access Key ID [None]: <ACCESS KEY>
+#      AWS Secret Access Key [None]: <SECRET KEY>
+#      Default region name [None]: ap-northeast-2
+#      Default output format [None]: json
+# setx AWS_PROFILE IDT-dev-eksadmin-guser
+# $ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+# aws sts assume-role --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/eks-admin-role" --role-session-name mytest
+# setx AWS_ACCESS_KEY_ID RoleAccessKeyID 
+# setx AWS_SECRET_ACCESS_KEY RoleSecretAccessKey
+# setx AWS_SESSION_TOKEN RoleSessionToken
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster
+# cat $HOME/.kube/config
+# kubectl get nodes
+# setx AWS_PROFILE default 
+# REG delete "HKCU\Environment" /F /V "AWS_ACCESS_KEY_ID"
+# REG delete "HKCU\Environment" /F /V "AWS_SECRET_ACCESS_KEY"
+# REG delete "HKCU\Environment" /F /V "AWS_SESSION_TOKEN" 
+# setx AWS_PROFILE default
+# aws sts get-caller-identity
+# <user>/.aws/config 와  <user>/.aws/credentials 에서 테스트 정보 삭제
 
 ###########################################################################
 # tflint
