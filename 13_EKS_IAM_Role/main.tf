@@ -584,7 +584,8 @@ resource "kubernetes_config_map_v1" "aws_auth" {
 
   depends_on = [
     aws_eks_cluster.eks_cluster,
-    aws_iam_role.eks_admin_role
+    aws_iam_role.eks_admin_role,
+    kubernetes_cluster_role_binding_v1.eksreadonly_clusterrolebinding
   ]
 }
 
@@ -603,7 +604,7 @@ resource "kubernetes_config_map_v1" "aws_auth" {
 
 
 ###########################################################################
-# EKS IAM Role
+# EKS IAM Role (Admin)
 ###########################################################################
 
 # IAM Role
@@ -662,7 +663,7 @@ resource "aws_iam_group" "eksadmin_iam_group" {
 
   depends_on = [
     aws_iam_role.eks_admin_role,
-  ]    
+  ]
 }
 
 resource "aws_iam_group_policy" "eksadmin_iam_group" {
@@ -674,7 +675,7 @@ resource "aws_iam_group_policy" "eksadmin_iam_group" {
     Statement = [
       {
         Action = [
-          "ec2:AssumeRole*",
+           "sts:AssumeRole",
         ]
         Sid      = "AllowAssumeOrganizationAccountRole"
         Effect   = "Allow"
@@ -687,7 +688,7 @@ resource "aws_iam_group_policy" "eksadmin_iam_group" {
 
 # Group Membership
 resource "aws_iam_group_membership" "eksadmins_membership" {
-  name = "${local.name}-group-membership"
+  name = "${local.name}-admin-group-membership"
 
   users = [
     aws_iam_user.eksadmin_guser.name,
@@ -706,7 +707,7 @@ resource "aws_iam_group_membership" "eksadmins_membership" {
 #      Default output format [None]: json
 # setx AWS_PROFILE IDT-dev-eksadmin-guser
 # $ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
-# aws sts assume-role --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/eks-admin-role" --role-session-name mytest
+# aws sts assume-role --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/IDT-dev-admin-role" --role-session-name mytest
 # setx AWS_ACCESS_KEY_ID RoleAccessKeyID 
 # setx AWS_SECRET_ACCESS_KEY RoleSecretAccessKey
 # setx AWS_SESSION_TOKEN RoleSessionToken
@@ -720,6 +721,184 @@ resource "aws_iam_group_membership" "eksadmins_membership" {
 # setx AWS_PROFILE default
 # aws sts get-caller-identity
 # <user>/.aws/config 와  <user>/.aws/credentials 에서 테스트 정보 삭제
+
+
+###########################################################################
+# EKS IAM Role (Readonly)
+###########################################################################
+resource "aws_iam_role" "eks_readonly_role" {
+  name = "${local.name}-readonly-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Sid    = ""
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+      },
+    ]
+  })
+
+  # https://docs.aws.amazon.com/eks/latest/userguide/view-kubernetes-resources.html
+  inline_policy {
+    name = "eks-readonly-access-policy"
+
+    policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Action = [
+            "iam:ListRoles",
+            "ssm:GetParameter",
+            "eks:DescribeNodegroup",
+            "eks:ListNodegroups",
+            "eks:DescribeCluster",
+            "eks:ListClusters",
+            "eks:AccessKubernetesApi",
+            "eks:ListUpdates",
+            "eks:ListFargateProfiles",
+            "eks:ListIdentityProviderConfigs",
+            "eks:ListAddons",
+            "eks:DescribeAddonVersions"
+          ]
+          Effect   = "Allow"
+          Resource = "*"
+        },
+      ]
+    })
+  }
+
+  tags = {
+    tag-key = "${local.name}-eks-readonly-role"
+  }
+}
+
+
+# User & Group
+resource "aws_iam_user" "eksreadonly_guser" {
+  name          = "${local.name}-eksreadonly-guser"
+  path          = "/"
+  force_destroy = true
+  tags          = local.common_tags
+}
+
+
+resource "aws_iam_group" "eksreadonly_iam_group" {
+  name = "${local.name}-eksreadonly"
+  path = "/"
+
+  depends_on = [
+    aws_iam_role.eks_admin_role,
+  ]
+}
+
+resource "aws_iam_group_policy" "eksreadonly_iam_group" {
+  name  = "${local.name}-eksreadonly-group-policy"
+  group = aws_iam_group.eksreadonly_iam_group.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+        ]
+        Sid      = "AllowAssumeOrganizationAccountRole"
+        Effect   = "Allow"
+        Resource = aws_iam_role.eks_readonly_role.arn
+      },
+    ]
+  })
+}
+
+
+# Group Membership
+resource "aws_iam_group_membership" "eksreadonly_membership" {
+  name = "${local.name}-readonly-group-membership"
+
+  users = [
+    aws_iam_user.eksreadonly_guser.name,
+  ]
+
+  group = aws_iam_group.eksreadonly_iam_group.name
+}
+
+# Cluster Role & Role Binding
+resource "kubernetes_cluster_role_v1" "eksreadonly_clusterrole" {
+  metadata {
+    name = "${local.name}-eksreadonly-clusterrole"
+  }
+
+  rule {
+    api_groups = [""] # core APIs 
+    resources  = ["nodes", "namespaces", "pods", "events", "services", "configmaps"]
+    verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments", "daemonsets", "statefulsets", "replicasets"]
+    verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["get", "list"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding_v1" "eksreadonly_clusterrolebinding" {
+  metadata {
+    name = "${local.name}-eksreadonly-clusterrolebinding"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.eksreadonly_clusterrole.metadata.0.name
+  }
+  subject {
+    kind      = "Group"
+    name      = "eks-readonly-group"
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
+# Check ConfigMap
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster --profile default
+# cat $HOME/.kube/config
+# kubectl -n kube-system get configmap aws-auth -o yaml
+
+# Check Readonly
+# aws iam create-login-profile --user-name IDT-dev-eksreadonly-guser --password "@EKSUser101" --no-password-reset-required
+# aws iam create-access-key --user-name IDT-dev-eksreadonly-guser
+# aws configure --profile IDT-dev-eksreadonly-guser
+#      AWS Access Key ID [None]: <ACCESS KEY>
+#      AWS Secret Access Key [None]: <SECRET KEY>
+#      Default region name [None]: ap-northeast-2
+#      Default output format [None]: json
+# setx AWS_PROFILE IDT-dev-eksreadonly-guser
+# $ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+# aws sts assume-role --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/IDT-dev-readonly-role" --role-session-name mytestreadonly
+# setx AWS_ACCESS_KEY_ID RoleAccessKeyID 
+# setx AWS_SECRET_ACCESS_KEY RoleSecretAccessKey
+# setx AWS_SESSION_TOKEN RoleSessionToken
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster
+# cat $HOME/.kube/config
+# kubectl get nodes
+# kubectl get sa -n kube-system (permission denied)
+
+# Clean
+# setx AWS_PROFILE default 
+# REG delete "HKCU\Environment" /F /V "AWS_ACCESS_KEY_ID"
+# REG delete "HKCU\Environment" /F /V "AWS_SECRET_ACCESS_KEY"
+# REG delete "HKCU\Environment" /F /V "AWS_SESSION_TOKEN" 
+# setx AWS_PROFILE default
+# aws sts get-caller-identity
+# <user>/.aws/config 와  <user>/.aws/credentials 에서 테스트 정보 삭제
+
 
 ###########################################################################
 # tflint

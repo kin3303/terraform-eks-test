@@ -1,17 +1,17 @@
 # Common Local Variables
 locals {
-  owners = var.business_divsion
+  owners      = var.business_divsion
   environment = var.environment
-  name = "${var.business_divsion}-${var.environment}"
+  name        = "${var.business_divsion}-${var.environment}"
 
   common_tags = {
-    owners = local.owners
+    owners      = local.owners
     environment = local.environment
   }
 
   eks_cluster_name = "${local.name}-${var.cluster_name}"
 
-  oidc_provider_arn = aws_iam_openid_connect_provider.oidc_provider.arn
+  oidc_provider_arn           = aws_iam_openid_connect_provider.oidc_provider.arn
   oidc_provider_extracted_arn = element(split("oidc-provider/", aws_iam_openid_connect_provider.oidc_provider.arn), 1)
 }
 
@@ -47,26 +47,31 @@ metadata:
 locals {
   configmap_roles = [
     {
-      rolearn = aws_iam_role.eks_nodegroup_role.arn
+      rolearn  = aws_iam_role.eks_nodegroup_role.arn
       username = "system:node:{{EC2PrivateDNSName}}"
-      groups = ["system:bootstrappers", "system:nodes"]
+      groups   = ["system:bootstrappers", "system:nodes"]
     },
     {
-      rolearn = aws_iam_role.eks_admin_role.arn
+      rolearn  = aws_iam_role.eks_admin_role.arn
       username = "eks-admin"
-      groups = ["system:masters"]
+      groups   = ["system:masters"]
+    },
+    {
+      rolearn  = aws_iam_role.eks_readonly_role.arn
+      username = "eks-readonly"
+      groups   = [kubernetes_cluster_role_binding_v1.eksreadonly_clusterrolebinding.subject[0].name] # "eks-readonly-group"
     },
   ]
   configmap_users = [
     {
-      userarn = aws_iam_user.admin_user.arn
+      userarn  = aws_iam_user.admin_user.arn
       username = aws_iam_user.admin_user.name
-      groups = ["system:masters"]
+      groups   = ["system:masters"]
     },
     {
-      userarn = aws_iam_user.basic_user.arn
+      userarn  = aws_iam_user.basic_user.arn
       username = aws_iam_user.basic_user.name
-      groups = ["system:masters"]
+      groups   = ["system:masters"]
     },
   ]
 }
