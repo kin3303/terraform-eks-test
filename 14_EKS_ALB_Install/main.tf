@@ -287,7 +287,7 @@ resource "aws_eks_cluster" "eks_cluster" {
 # EKS Cluster Node Group - Public
 #    https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_node_group
 ###########################################################################
-
+/*
 resource "aws_eks_node_group" "eks_ng_public" {
   cluster_name    = aws_eks_cluster.eks_cluster.name
   node_group_name = "${local.name}-eks-ng-public"
@@ -328,7 +328,7 @@ resource "aws_eks_node_group" "eks_ng_public" {
     Name = "Public-Node-Group"
   }
 }
-
+*/
 
 ###########################################################################
 # EKS Cluster Node Group - Private
@@ -981,7 +981,7 @@ resource "aws_iam_group_policy" "eksdeveloper_iam_group" {
         ]
         Effect   = "Allow"
         Sid      = "AllowAssumeOrganizationAccountRole"
-        Resource = "${aws_iam_role.eks_developer_role.arn}"
+        Resource = aws_iam_role.eks_developer_role.arn
       },
     ]
   })
@@ -1073,6 +1073,157 @@ resource "kubernetes_role_binding_v1" "eksdeveloper_rolebinding" {
     name      = "eks-developer-group"
     api_group = "rbac.authorization.k8s.io"
   }
+}
+
+###########################################################################
+# ALB Controller Role
+###########################################################################
+
+# AWS Load Balancer Controller IAM Policy (latest)
+data "http" "lbc_iam_policy" {
+  url = "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json"
+
+  request_headers = {
+    Accept = "application/json"
+  }
+}
+
+# ALB Controller IAM Policy 
+resource "aws_iam_policy" "lbc_iam_policy" {
+  name        = "${local.name}-AWSLoadBalancerControllerIAMPolicy"
+  path        = "/"
+  description = "AWS Load Balancer Controller IAM Policy"
+  policy      = data.http.lbc_iam_policy.body
+}
+
+# ALB Controller IAM Role
+resource "aws_iam_role" "lbc_iam_role" {
+  name = "${local.name}-lbc-iam-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Effect = "Allow"
+        Sid    = ""
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.oidc_provider.arn
+        }
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.oidc_provider.url, "https://", "")}:aud" : "sts.amazonaws.com",
+            "${replace(aws_iam_openid_connect_provider.oidc_provider.url, "https://", "")}:sub" : "system:serviceaccount:kube-system:aws-load-balancer-controller"
+          }
+        }
+      },
+    ]
+  })
+
+  tags = {
+    tag-key = "AWSLoadBalancerControllerIAMPolicy"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "lbc_iam_role_policy_attach" {
+  policy_arn = aws_iam_policy.lbc_iam_policy.arn
+  role       = aws_iam_role.lbc_iam_role.name
+}
+
+###########################################################################
+# ALB Controller Install
+#     https://artifacthub.io/packages/helm/aws/aws-load-balancer-controller
+#     https://docs.aws.amazon.com/ko_kr/eks/latest/userguide/aws-load-balancer-controller.html
+#     https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.4/deploy/installation/
+###########################################################################
+
+resource "helm_release" "loadbalancer_controller" {
+
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+
+  # Region 에 따라 Repository URL 변경 : https://docs.aws.amazon.com/eks/latest/userguide/add-ons-images.html
+  set {
+    name  = "image.repository"
+    value = "602401143452.dkr.ecr.ap-northeast-2.amazonaws.com/amazon/aws-load-balancer-controller"
+  }
+
+  set {
+    name  = "serviceAccount.create"
+    value = "true"
+  }
+
+  # Service Account 는 lbc_iam_role 에 설정한 system:serviceaccount:kube-system:aws-load-balancer-controller 이름을 가져야 함
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+
+  /*
+  apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    labels:
+      app.kubernetes.io/component: controller
+      app.kubernetes.io/name: aws-load-balancer-controller
+    name: aws-load-balancer-controller
+    namespace: kube-system
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/AmazonEKSLoadBalancerControllerRole
+  */
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.lbc_iam_role.arn
+  }
+
+  set {
+    name  = "vpcId"
+    value = module.vpc.vpc_id
+  }
+
+  set {
+    name  = "region"
+    value = var.aws_region
+  }
+
+  set {
+    name  = "clusterName"
+    value = aws_eks_cluster.eks_cluster.id
+  }
+
+  depends_on = [
+    aws_iam_role.lbc_iam_role,
+    aws_eks_node_group.eks_ng_private
+  ]
+}
+
+# aws eks --region ap-northeast-2 update-kubeconfig --name IDT-dev-eks-demo-cluster --profile default
+# kubectl get deployment -n kube-system aws-load-balancer-controller -o yaml
+# kubectl -n kube-system get svc aws-load-balancer-webhook-service -o yaml
+
+###########################################################################
+# Ingress Class
+#     https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/
+#     https://kubernetes.io/docs/concepts/services-networking/ingress/#ingress-class
+#     https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.4/guide/ingress/ingress_class/
+###########################################################################
+resource "kubernetes_ingress_class_v1" "ingress_class_default" {
+
+  metadata {
+    name = "my-aws-ingress-class"
+    annotations = {
+      "ingressclass.kubernetes.io/is-default-class" = "true"
+    }
+  }
+  spec {
+    controller = "ingress.k8s.aws/alb"
+  }
+
+  depends_on = [
+    helm_release.loadbalancer_controller
+  ]
 }
 
 ###########################################################################
